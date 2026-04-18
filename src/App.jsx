@@ -1,7 +1,7 @@
 import { initializeApp, getApp, deleteApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
+  getAuth,
   signInWithEmailAndPassword, signOut, onAuthStateChanged,
   createUserWithEmailAndPassword, EmailAuthProvider,
   reauthenticateWithCredential, updatePassword,
@@ -1586,13 +1586,17 @@ useEffect(() => {
   return () => unsub();
 }, []);
 
-useEffect(() => {
-  if (currentUser?.role !== "admin") return;
-  const unsub = onSnapshot(collection(db, "users"), (snap) => {
-    setAllUsers(snap.docs.map(d => d.data()));
-  });
-  return () => unsub();
-}, [currentUser?.role]);
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+    const unsub = onSnapshot(doc(db, "users", currentUser.uid), (snap) => {
+      if (snap.exists()) setCurrentUser(prev => ({ ...prev, ...snap.data() }));
+    });
+    return () => unsub();
+  }, [currentUser?.uid]);
+
+  const handleSetPage = (p) => { setPage(p); setAnimKey(k => k + 1); };
+  const toggleTheme = () => setDarkMode(d => !d);
+
  // ✅ REEMPLAZA handleLogin con esto:
 const MAX_INTENTOS = 5;
 const BLOQUEO_MS = 15 * 60 * 1000;
