@@ -1,3 +1,5 @@
+import { initializeApp, getApp, deleteApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -1148,7 +1150,65 @@ function AdminPanel({ allUsers, setAllUsers }) {
   const totalIngresos = ingresosActivacion + ingresosMensual;
   const mesesData = Array.from({ length: 6 }, (_, i) => { const d = new Date(); d.setMonth(d.getMonth() - i); const mes = d.toLocaleDateString("es-CO", { month: "short", year: "2-digit" }); const activas = empresas.filter(u => { if (!u.fechaActivacion) return false; const fa = new Date(u.fechaActivacion); return fa.getFullYear() === d.getFullYear() && fa.getMonth() === d.getMonth(); }).length; return { label: mes, val: activas * (precios.activacion + precios.mensual) }; }).reverse();
 
-  const crearEmpresa = async () => { setFormErr(""); setCreatedOk(""); if (!form.name.trim()) { setFormErr("El nombre es obligatorio."); return; } if (!form.email.trim() || !/\S+@\S+\.\S+/.test(form.email)) { setFormErr("Correo no válido."); return; } if (form.pass.length < 6) { setFormErr("Contraseña mínimo 6 caracteres."); return; } setCreating(true); const venc = new Date(); venc.setDate(venc.getDate() + 30); try { const { user } = await createUserWithEmailAndPassword(auth, form.email.trim().toLowerCase(), form.pass); const profile = { uid: user.uid, email: form.email.trim().toLowerCase(), name: form.name.trim(), role: "user", active: true, products: [], sales: [], createdAt: new Date().toISOString(), fechaActivacion: new Date().toISOString(), vencimiento: venc.toISOString(), precioActivacion: precios.activacion, precioMensual: precios.mensual }; await setDoc(doc(db, "users", user.uid), profile); setAllUsers(prev => [...prev, profile]); setForm({ name: "", email: "", pass: "" }); setShowPass(false); setCreatedOk(`✅ Empresa "${profile.name}" creada.`); setTimeout(() => setCreatedOk(""), 6000); } catch (e) { if (e.code === "auth/email-already-in-use") setFormErr("Ese correo ya está registrado."); else setFormErr("Error: " + e.message); } setCreating(false); };
+ const crearEmpresa = async () => {
+  setFormErr(""); setCreatedOk("");
+  if (!form.name.trim()) { setFormErr("El nombre es obligatorio."); return; }
+  if (!form.email.trim() || !/\S+@\S+\.\S+/.test(form.email)) { setFormErr("Correo no válido."); return; }
+  if (form.pass.length < 6) { setFormErr("Contraseña mínimo 6 caracteres."); return; }
+  setCreating(true);
+
+  const venc = new Date();
+  venc.setDate(venc.getDate() + 30);
+  let secondaryApp = null;
+
+  try {
+    // ✅ App secundaria para NO cerrar sesión del admin
+    const config = getApp().options;
+    secondaryApp = initializeApp(config, `sec-${Date.now()}`);
+    const secondaryAuth = getAuth(secondaryApp);
+
+    const { user } = await createUserWithEmailAndPassword(
+      secondaryAuth,
+      form.email.trim().toLowerCase(),
+      form.pass
+    );
+
+    // Cerrar sesión del usuario recién creado en la app secundaria
+    await signOut(secondaryAuth);
+
+    const profile = {
+      uid: user.uid,
+      email: form.email.trim().toLowerCase(),
+      name: form.name.trim(),
+      role: "user",
+      active: true,
+      products: [],
+      sales: [],
+      createdAt: new Date().toISOString(),
+      fechaActivacion: new Date().toISOString(),
+      vencimiento: venc.toISOString(),
+      precioActivacion: precios.activacion,
+      precioMensual: precios.mensual,
+    };
+
+    await setDoc(doc(db, "users", user.uid), profile);
+    setAllUsers(prev => [...prev, profile]);
+    setForm({ name: "", email: "", pass: "" });
+    setShowPass(false);
+    setCreatedOk(`✅ Empresa "${profile.name}" creada.`);
+    setTimeout(() => setCreatedOk(""), 6000);
+
+  } catch (e) {
+    if (e.code === "auth/email-already-in-use") setFormErr("Ese correo ya está registrado.");
+    else setFormErr("Error: " + e.message);
+  } finally {
+    // ✅ Destruir la app secundaria siempre
+    if (secondaryApp) {
+      try { await deleteApp(secondaryApp); } catch {}
+    }
+  }
+  setCreating(false);
+};
   const renovar = (u) => async () => { const venc = new Date(Math.max(new Date(u.vencimiento || new Date()), new Date())); venc.setDate(venc.getDate() + 30); await updateDoc(doc(db, "users", u.uid), { vencimiento: venc.toISOString(), active: true }); setAllUsers(prev => prev.map(x => x.uid === u.uid ? { ...x, vencimiento: venc.toISOString(), active: true } : x)); };
   const abrirEdicion = (u) => { setEditModal(u); setEditForm({ name: u.name, email: u.email, pass: "", precioActivacion: u.precioActivacion || precios.activacion, precioMensual: u.precioMensual || precios.mensual }); setEditErr(""); setEditShowPass(false); };
   const guardarEdicion = async () => { if (!editForm.name.trim()) { setEditErr("Nombre obligatorio."); return; } setEditSaving(true); setEditErr(""); try { const updates = { name: editForm.name.trim(), email: editForm.email.trim().toLowerCase(), precioActivacion: Number(editForm.precioActivacion) || precios.activacion, precioMensual: Number(editForm.precioMensual) || precios.mensual }; await updateDoc(doc(db, "users", editModal.uid), updates); setAllUsers(prev => prev.map(u => u.uid === editModal.uid ? { ...u, ...updates } : u)); setEditModal(null); } catch (e) { setEditErr("Error: " + e.message); } setEditSaving(false); };
